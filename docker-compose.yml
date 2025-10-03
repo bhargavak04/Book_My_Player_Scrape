@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  bookmyplayer-scraper:
+    build: .
+    container_name: bmp-scraper
+    restart: unless-stopped
+    
+    # Environment variables
+    environment:
+      - AUTO_SAVE_INTERVAL=1000
+      - REQUEST_DELAY=1.0
+      - INPUT_FILE=/app/input/urls.xlsx
+      - URL_COLUMN=url
+      - START_FROM=0
+      - TIMEOUT=30
+      - MAX_RETRIES=3
+      - MAX_WORKERS=1
+    
+    # Volume mounts
+    volumes:
+      - ./input:/app/input:ro          # Input files (read-only)
+      - ./output:/app/output           # Output files
+      - ./logs:/app/logs               # Log files
+      - /etc/localtime:/etc/localtime:ro  # Timezone sync
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: '1.0'
+        reservations:
+          memory: 512m
+          cpus: '0.5'
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/logs') else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
