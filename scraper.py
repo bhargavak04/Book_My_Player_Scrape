@@ -475,45 +475,113 @@ class BookMyPlayerScraperPro:
         
         return data
     
-    def detect_content_type(self, html: str, url: str) -> str:
-        """Detect content type based on URL patterns and page content"""
+    def detect_content_type(self, html: str, url: str) -> tuple[str, dict]:
+        """Detect content type using brute force - try all extraction methods and pick the best one"""
         
-        # URL-based detection
-        if '/gym/' in url or 'academy' in url.lower():
+        # Try venue extraction first
+        venue_data = self.extract_venue_fields(html, url)
+        venue_score = self._calculate_extraction_score(venue_data, 'venue')
+        
+        # Try player extraction
+        player_data = self.extract_player_fields(html, url)
+        player_score = self._calculate_extraction_score(player_data, 'player')
+        
+        # Try coach extraction (both HTML and JSON)
+        coach_data = self.extract_coach_fields(html, url)
+        coach_score = self._calculate_extraction_score(coach_data, 'coach')
+        
+        # Debug logging
+        self.logger.debug(f"Extraction scores - Venue: {venue_score}, Player: {player_score}, Coach: {coach_score}")
+        
+        # Return the type with the highest score and its data
+        scores = {
+            'venue': venue_score,
+            'player': player_score,
+            'coach': coach_score
+        }
+        
+        data_map = {
+            'venue': venue_data,
+            'player': player_data,
+            'coach': coach_data
+        }
+        
+        best_type = max(scores, key=scores.get)
+        
+        # Only return the best type if it has a reasonable score
+        if scores[best_type] > 0:
+            return best_type, data_map[best_type]
+        else:
+            # Fallback to URL-based detection if all scores are 0
+            fallback_type = self._fallback_url_detection(url)
+            return fallback_type, data_map.get(fallback_type, {'url': url, 'type': fallback_type, 'scraped_at': datetime.now().isoformat()})
+    
+    def _calculate_extraction_score(self, data: dict, content_type: str) -> int:
+        """Calculate how well the extraction worked (higher score = better match)"""
+        score = 0
+        
+        # Base score for having the right type
+        if data.get('type') == content_type:
+            score += 10
+        
+        # Score for having key fields with actual values
+        if content_type == 'venue':
+            if data.get('name') and data.get('name') != 'Unknown':
+                score += 5
+            if data.get('phone') and data.get('phone') != 'No phone':
+                score += 5
+            if data.get('address') and data.get('address') != 'No address':
+                score += 5
+            if data.get('sport'):
+                score += 3
+            if data.get('description'):
+                score += 2
+                
+        elif content_type == 'player':
+            if data.get('name') and data.get('name') != 'Unknown':
+                score += 5
+            if data.get('phone') and data.get('phone') != 'No phone':
+                score += 5
+            if data.get('email') and data.get('email') != 'No email':
+                score += 5
+            if data.get('location') and data.get('location') != 'No location':
+                score += 3
+                
+        elif content_type == 'coach':
+            if data.get('name') and data.get('name') != 'Unknown':
+                score += 5
+            if data.get('phone') and data.get('phone') != 'No phone':
+                score += 5
+            if data.get('email') and data.get('email') != 'No email':
+                score += 5
+            if data.get('location') and data.get('location') != 'No location':
+                score += 3
+            if data.get('experience'):
+                score += 2
+            if data.get('education'):
+                score += 2
+        
+        return score
+    
+    def _fallback_url_detection(self, url: str) -> str:
+        """Fallback URL-based detection when brute force fails"""
+        url_lower = url.lower()
+        
+        # Venue patterns
+        venue_patterns = [
+            '/gym/', '/academy', 'academy', '/school', 'school', 
+            '/club', 'club', '/fc', 'fc', '/acad', 'acad',
+            '-aid-', '/aid-', 'football-accademy', 'football-academy'
+        ]
+        if any(pattern in url_lower for pattern in venue_patterns):
             return 'venue'
-        elif 'coach' in url:
+        
+        # Coach patterns
+        if 'coach' in url_lower or '-chid-' in url_lower:
             return 'coach' 
-        elif 'player' in url:
-            return 'player'
         
-        # Content-based detection as fallback
-        soup = BeautifulSoup(html, 'html.parser')
-        
-        # Check for venue-specific elements
-        venue_indicators = [
-            soup.find(attrs={'id': 'academy_phone'}),
-            soup.find(attrs={'id': 'academy_address'}),
-            soup.find(attrs={'id': 'listing_title'})
-        ]
-        if any(venue_indicators):
-            return 'venue'
-        
-        # Check for coach-specific elements
-        coach_indicators = [
-            soup.find(attrs={'id': 'coachName'}),
-            soup.find(attrs={'id': 'coachPhone'}),
-            soup.find(attrs={'id': 'coachAddress'})
-        ]
-        if any(coach_indicators):
-            return 'coach'
-        
-        # Check for player-specific elements
-        player_indicators = [
-            soup.find(attrs={'id': 'playerName'}),
-            soup.find(attrs={'id': 'playerPhone'}),
-            soup.find(attrs={'id': 'playerAddress'})
-        ]
-        if any(player_indicators):
+        # Player patterns
+        if 'player' in url_lower or '-pid-' in url_lower:
             return 'player'
         
         return 'unknown'
@@ -525,14 +593,11 @@ class BookMyPlayerScraperPro:
             if not html:
                 return {'url': url, 'type': 'error', 'error': 'Failed to fetch page', 'scraped_at': datetime.now().isoformat()}
             
-            content_type = self.detect_content_type(html, url)
+            # Use brute force detection - tries all extraction methods and picks the best one
+            content_type, extracted_data = self.detect_content_type(html, url)
             
-            if content_type == 'venue':
-                return self.extract_venue_fields(html, url)
-            elif content_type == 'coach':
-                return self.extract_coach_fields(html, url)
-            elif content_type == 'player':
-                return self.extract_player_fields(html, url)
+            if content_type in ['venue', 'coach', 'player']:
+                return extracted_data
             else:
                 self.logger.warning(f"UNKNOWN TYPE: {url} - Could not determine content type")
                 return {'url': url, 'type': 'unknown', 'error': 'Could not determine content type', 'scraped_at': datetime.now().isoformat()}
