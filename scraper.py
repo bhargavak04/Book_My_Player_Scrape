@@ -175,33 +175,42 @@ class BookMyPlayerScraperPro:
         # Otherwise, treat as HTML
         soup = BeautifulSoup(html, 'html.parser')
         
-        # Direct ID extractions (try multiple approaches)
-        id_fields = {
-            'coachName': 'name',
-            'coachPhone': 'phone',
-            'coachAddress': 'address',
-            'sport_details': 'sport'
-        }
+        # Check if this is actually a coach page first
+        coach_indicators = [
+            soup.find(attrs={'id': 'coachName'}),
+            soup.find(attrs={'id': 'coachPhone'}),
+            soup.find(attrs={'id': 'coachAddress'})
+        ]
         
-        for field_id, key in id_fields.items():
-            # Try ID first
-            element = soup.find(attrs={'id': field_id})
-            if element:
-                value = element.get('value') or element.get_text(strip=True)
-                if value and value.strip():
-                    if key == 'phone':
-                        data[key] = self.format_phone(value)
-                    else:
-                        data[key] = value
-            else:
-                # Try class-based extraction as fallback
-                if key == 'name':
-                    # Try to find coach name in title or heading
-                    title_elem = soup.find('h1') or soup.find('title')
-                    if title_elem:
-                        title_text = title_elem.get_text(strip=True)
-                        if 'coach' in title_text.lower():
-                            data[key] = title_text
+        # Only extract coach data if this looks like a coach page
+        if any(coach_indicators):
+            # Direct ID extractions (try multiple approaches)
+            id_fields = {
+                'coachName': 'name',
+                'coachPhone': 'phone',
+                'coachAddress': 'address',
+                'sport_details': 'sport'
+            }
+            
+            for field_id, key in id_fields.items():
+                # Try ID first
+                element = soup.find(attrs={'id': field_id})
+                if element:
+                    value = element.get('value') or element.get_text(strip=True)
+                    if value and value.strip():
+                        if key == 'phone':
+                            data[key] = self.format_phone(value)
+                        else:
+                            data[key] = value
+                else:
+                    # Try class-based extraction as fallback
+                    if key == 'name':
+                        # Try to find coach name in title or heading
+                        title_elem = soup.find('h1') or soup.find('title')
+                        if title_elem:
+                            title_text = title_elem.get_text(strip=True)
+                            if 'coach' in title_text.lower():
+                                data[key] = title_text
         
         # Enhanced location extraction (avoid malformed content)
         location_patterns = [
@@ -393,24 +402,33 @@ class BookMyPlayerScraperPro:
                     else:
                         data[key] = value
         
-        # Enhanced name extraction - try multiple sources
+        # Enhanced name extraction - only for actual player pages
         if not data.get('name'):
-            # Try h1 tag first
-            h1_elem = soup.find('h1')
-            if h1_elem:
-                h1_text = h1_elem.get_text(strip=True)
-                if h1_text and len(h1_text) > 3:
-                    data['name'] = h1_text
-            else:
-                # Try title tag
-                title_elem = soup.find('title')
-                if title_elem:
-                    title_text = title_elem.get_text(strip=True)
-                    # Extract name from title (remove " - Basketball Player in Noida" part)
-                    if ' - ' in title_text:
-                        data['name'] = title_text.split(' - ')[0]
-                    else:
-                        data['name'] = title_text
+            # Check if this is actually a player page by looking for player-specific elements
+            player_indicators = [
+                soup.find(attrs={'id': 'playerName'}),
+                soup.find(attrs={'id': 'playerPhone'}),
+                soup.find(attrs={'id': 'playerAddress'})
+            ]
+            
+            # Only extract name if this looks like a player page
+            if any(player_indicators):
+                # Try h1 tag first
+                h1_elem = soup.find('h1')
+                if h1_elem:
+                    h1_text = h1_elem.get_text(strip=True)
+                    if h1_text and len(h1_text) > 3:
+                        data['name'] = h1_text
+                else:
+                    # Try title tag
+                    title_elem = soup.find('title')
+                    if title_elem:
+                        title_text = title_elem.get_text(strip=True)
+                        # Extract name from title (remove " - Basketball Player in Noida" part)
+                        if ' - ' in title_text:
+                            data['name'] = title_text.split(' - ')[0]
+                        else:
+                            data['name'] = title_text
         
         # Enhanced location extraction
         location_patterns = [
