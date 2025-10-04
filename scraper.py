@@ -157,11 +157,19 @@ class BookMyPlayerScraperPro:
         return data
     
     def extract_coach_fields(self, html: str, url: str) -> Dict[str, Any]:
-        """Extract coach specific fields"""
-        soup = BeautifulSoup(html, 'html.parser')
+        """Extract coach specific fields - handles both HTML and JSON responses"""
         data = {'type': 'coach', 'url': url, 'scraped_at': datetime.now().isoformat()}
         
-        # Direct ID extractions
+        # First, try to detect if this is JSON data
+        html_clean = html.strip()
+        if html_clean.startswith('{') or html_clean.startswith('\n{'):
+            # This is JSON data - extract from JSON
+            return self.extract_coach_from_json(html_clean, url)
+        
+        # Otherwise, treat as HTML
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Direct ID extractions (try multiple approaches)
         id_fields = {
             'coachName': 'name',
             'coachPhone': 'phone',
@@ -170,32 +178,162 @@ class BookMyPlayerScraperPro:
         }
         
         for field_id, key in id_fields.items():
+            # Try ID first
             element = soup.find(attrs={'id': field_id})
             if element:
                 value = element.get('value') or element.get_text(strip=True)
-                if value:
+                if value and value.strip():
                     if key == 'phone':
                         data[key] = self.format_phone(value)
                     else:
                         data[key] = value
+            else:
+                # Try class-based extraction as fallback
+                if key == 'name':
+                    # Try to find coach name in title or heading
+                    title_elem = soup.find('h1') or soup.find('title')
+                    if title_elem:
+                        title_text = title_elem.get_text(strip=True)
+                        if 'coach' in title_text.lower():
+                            data[key] = title_text
         
-        # Location extraction with icon
-        location_pattern = r'<i class="fa-solid fa-location-dot"></i>\s*([^<]+)'
-        location_match = re.search(location_pattern, html)
-        if location_match:
-            data['location'] = location_match.group(1).strip()
+        # Enhanced location extraction
+        location_patterns = [
+            r'<i class="fa-solid fa-location-dot"></i>\s*([^<\n]+)',
+            r'<i class="fa-solid fa-location-dot"></i>\s*([^<]+?)(?=<|$)',
+            r'Location[:\s]*([^<\n]+)',
+            r'Address[:\s]*([^<\n]+)'
+        ]
         
-        # Email extraction
-        email_pattern = r'<i class="fa-regular fa-envelope"></i>\s*([^<]+@[^<]+)'
-        email_match = re.search(email_pattern, html)
-        if email_match:
-            data['email'] = email_match.group(1).strip()
+        for pattern in location_patterns:
+            location_match = re.search(pattern, html, re.IGNORECASE)
+            if location_match:
+                location_text = location_match.group(1).strip()
+                if location_text and len(location_text) > 3:
+                    data['location'] = location_text
+                    break
+        
+        # Enhanced email extraction (avoid generic emails)
+        email_patterns = [
+            r'<i class="fa-regular fa-envelope"></i>\s*([^<\n]+@[^<\n]+)',
+            r'Email[:\s]*([^<\n]+@[^<\n]+)',
+            r'Contact[:\s]*([^<\n]+@[^<\n]+)',
+            r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+        ]
+        
+        for pattern in email_patterns:
+            email_match = re.search(pattern, html, re.IGNORECASE)
+            if email_match:
+                email_text = email_match.group(1).strip()
+                # Skip generic emails
+                if email_text and not any(generic in email_text.lower() for generic in ['care@', 'info@', 'support@', 'contact@', 'admin@']):
+                    data['email'] = email_text
+                    break
+        
+        # Enhanced phone extraction
+        phone_patterns = [
+            r'<i class="fa-solid fa-phone"></i>\s*([^<\n]+)',
+            r'Phone[:\s]*([^<\n]+)',
+            r'Contact[:\s]*([^<\n]+)',
+            r'(\+?[0-9\s\-\(\)]{10,})'
+        ]
+        
+        for pattern in phone_patterns:
+            phone_match = re.search(pattern, html, re.IGNORECASE)
+            if phone_match:
+                phone_text = phone_match.group(1).strip()
+                if phone_text and len(re.sub(r'[^0-9]', '', phone_text)) >= 10:
+                    data['phone'] = self.format_phone(phone_text)
+                    break
         
         # Date of Birth extraction
-        dob_pattern = r'Date Of Birth:\s*(\d{4}-\d{2}-\d{2})'
-        dob_match = re.search(dob_pattern, html)
-        if dob_match:
-            data['date_of_birth'] = dob_match.group(1)
+        dob_patterns = [
+            r'Date Of Birth[:\s]*(\d{4}-\d{2}-\d{2})',
+            r'DOB[:\s]*(\d{4}-\d{2}-\d{2})',
+            r'Born[:\s]*(\d{4}-\d{2}-\d{2})'
+        ]
+        
+        for pattern in dob_patterns:
+            dob_match = re.search(pattern, html, re.IGNORECASE)
+            if dob_match:
+                data['date_of_birth'] = dob_match.group(1)
+                break
+        
+        return data
+    
+    def extract_coach_from_json(self, json_content: str, url: str) -> Dict[str, Any]:
+        """Extract coach data from JSON response"""
+        data = {'type': 'coach', 'url': url, 'scraped_at': datetime.now().isoformat()}
+        
+        try:
+            # Clean the JSON content
+            json_clean = json_content.strip()
+            if json_clean.startswith('\n'):
+                json_clean = json_clean[1:]
+            
+            # Check if content is empty
+            if not json_clean:
+                self.logger.warning(f"Empty JSON content for coach URL: {url}")
+                return data
+            
+            # Parse JSON
+            json_data = json.loads(json_clean)
+            
+            # Extract coach data from 'd' key
+            if 'd' in json_data:
+                coach_info = json_data['d']
+                
+                # Map JSON fields to our data structure
+                field_mapping = {
+                    'name': 'name',
+                    'phone': 'phone',
+                    'email': 'email',
+                    'address': 'address',
+                    'city': 'city',
+                    'state': 'state',
+                    'sport': 'sport',
+                    'experience': 'experience',
+                    'education': 'education',
+                    'achievement': 'achievement',
+                    'skill': 'skills',
+                    'heighlight': 'highlight',
+                    'fee': 'fee',
+                    'package': 'package',
+                    'gender': 'gender',
+                    'location': 'location',
+                    'certificate': 'certificate',
+                    'about': 'about',
+                    'postcode': 'postcode',
+                    'lat': 'latitude',
+                    'lng': 'longitude'
+                }
+                
+                for json_key, data_key in field_mapping.items():
+                    if json_key in coach_info and coach_info[json_key] is not None:
+                        value = coach_info[json_key]
+                        if value and str(value).strip():
+                            if data_key == 'phone':
+                                data[data_key] = self.format_phone(str(value))
+                            else:
+                                data[data_key] = str(value)
+                
+                # Create location string from city and state
+                if 'city' in data and 'state' in data:
+                    data['location'] = f"{data['city']}, {data['state']}"
+                elif 'city' in data:
+                    data['location'] = data['city']
+                elif 'state' in data:
+                    data['location'] = data['state']
+                
+                self.logger.info(f"Successfully extracted coach data from JSON: {data.get('name', 'Unknown')}")
+                
+            else:
+                self.logger.warning("No 'd' key found in coach JSON data")
+                
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Failed to parse coach JSON: {e}")
+        except Exception as e:
+            self.logger.error(f"Error extracting coach from JSON: {e}")
         
         return data
     
@@ -204,7 +342,7 @@ class BookMyPlayerScraperPro:
         soup = BeautifulSoup(html, 'html.parser')
         data = {'type': 'player', 'url': url, 'scraped_at': datetime.now().isoformat()}
         
-        # Direct ID extractions
+        # Direct ID extractions (try multiple approaches)
         id_fields = {
             'playerAddress': 'address',
             'playerPhone': 'phone',
@@ -214,27 +352,78 @@ class BookMyPlayerScraperPro:
         }
         
         for field_id, key in id_fields.items():
+            # Try ID first
             element = soup.find(attrs={'id': field_id})
             if element:
                 value = element.get('value') or element.get_text(strip=True)
-                if value:
+                if value and value.strip():
                     if key == 'phone':
                         data[key] = self.format_phone(value)
                     else:
                         data[key] = value
+            else:
+                # Try class-based extraction as fallback
+                if key == 'name':
+                    # Try to find player name in title or heading
+                    title_elem = soup.find('h1') or soup.find('title')
+                    if title_elem:
+                        title_text = title_elem.get_text(strip=True)
+                        if 'player' in title_text.lower():
+                            data[key] = title_text
         
-        # Location extraction with icon
-        location_pattern = r'<i class="fa-solid fa-location-dot"></i>\s*([^<]+?)</p>'
-        location_match = re.search(location_pattern, html)
-        if location_match:
-            data['location'] = location_match.group(1).strip()
+        # Enhanced location extraction
+        location_patterns = [
+            r'<i class="fa-solid fa-location-dot"></i>\s*([^<\n]+?)</p>',
+            r'<i class="fa-solid fa-location-dot"></i>\s*([^<\n]+)',
+            r'<i class="fa-solid fa-location-dot"></i>\s*([^<]+?)(?=<|$)',
+            r'Location[:\s]*([^<\n]+)',
+            r'Address[:\s]*([^<\n]+)'
+        ]
         
-        # Email extraction
-        email_pattern = r'<i class="fa-regular fa-envelope"></i>\s*([^<]*)</p>'
-        email_match = re.search(email_pattern, html)
-        if email_match:
-            email_value = email_match.group(1).strip()
-            data['email'] = email_value if email_value != '-' else ''
+        for pattern in location_patterns:
+            location_match = re.search(pattern, html, re.IGNORECASE)
+            if location_match:
+                location_text = location_match.group(1).strip()
+                if location_text and len(location_text) > 3 and location_text != '-':
+                    data['location'] = location_text
+                    break
+        
+        # Enhanced email extraction (avoid generic emails and empty values)
+        email_patterns = [
+            r'<i class="fa-regular fa-envelope"></i>\s*([^<\n]+@[^<\n]+)',
+            r'<i class="fa-regular fa-envelope"></i>\s*([^<]*)</p>',
+            r'Email[:\s]*([^<\n]+@[^<\n]+)',
+            r'Contact[:\s]*([^<\n]+@[^<\n]+)',
+            r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+        ]
+        
+        for pattern in email_patterns:
+            email_match = re.search(pattern, html, re.IGNORECASE)
+            if email_match:
+                email_text = email_match.group(1).strip()
+                # Skip generic emails and empty values
+                if (email_text and 
+                    email_text != '-' and 
+                    '@' in email_text and
+                    not any(generic in email_text.lower() for generic in ['care@', 'info@', 'support@', 'contact@', 'admin@'])):
+                    data['email'] = email_text
+                    break
+        
+        # Enhanced phone extraction
+        phone_patterns = [
+            r'<i class="fa-solid fa-phone"></i>\s*([^<\n]+)',
+            r'Phone[:\s]*([^<\n]+)',
+            r'Contact[:\s]*([^<\n]+)',
+            r'(\+?[0-9\s\-\(\)]{10,})'
+        ]
+        
+        for pattern in phone_patterns:
+            phone_match = re.search(pattern, html, re.IGNORECASE)
+            if phone_match:
+                phone_text = phone_match.group(1).strip()
+                if phone_text and len(re.sub(r'[^0-9]', '', phone_text)) >= 10:
+                    data['phone'] = self.format_phone(phone_text)
+                    break
         
         return data
     
