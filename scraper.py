@@ -203,7 +203,7 @@ class BookMyPlayerScraperPro:
                         if 'coach' in title_text.lower():
                             data[key] = title_text
         
-        # Enhanced location extraction
+        # Enhanced location extraction (avoid malformed content)
         location_patterns = [
             r'<i class="fa-solid fa-location-dot"></i>\s*([^<\n]+)',
             r'<i class="fa-solid fa-location-dot"></i>\s*([^<]+?)(?=<|$)',
@@ -215,11 +215,15 @@ class BookMyPlayerScraperPro:
             location_match = re.search(pattern, html, re.IGNORECASE)
             if location_match:
                 location_text = location_match.group(1).strip()
-                if location_text and len(location_text) > 3:
+                # Clean up location text and avoid malformed content
+                if (location_text and 
+                    len(location_text) > 3 and
+                    len(location_text) < 200 and  # Avoid very long text
+                    not any(bad in location_text.lower() for bad in ['book coaching', 'training schedule', 'free trial', 'thumbnailurl', 'uploaddate', 'license', 'schema.org'])):
                     data['location'] = location_text
                     break
         
-        # Enhanced email extraction (avoid generic emails)
+        # Enhanced email extraction (avoid generic emails and malformed content)
         email_patterns = [
             r'<i class="fa-regular fa-envelope"></i>\s*([^<\n]+@[^<\n]+)',
             r'Email[:\s]*([^<\n]+@[^<\n]+)',
@@ -231,8 +235,11 @@ class BookMyPlayerScraperPro:
             email_match = re.search(pattern, html, re.IGNORECASE)
             if email_match:
                 email_text = email_match.group(1).strip()
-                # Skip generic emails
-                if email_text and not any(generic in email_text.lower() for generic in ['care@', 'info@', 'support@', 'contact@', 'admin@']):
+                # Skip generic emails and malformed content
+                if (email_text and 
+                    len(email_text) < 100 and  # Avoid very long malformed text
+                    not any(generic in email_text.lower() for generic in ['care@', 'info@', 'support@', 'contact@', 'admin@']) and
+                    not any(bad in email_text.lower() for bad in ['book coaching', 'training schedule', 'free trial', 'thumbnailurl', 'uploaddate', 'license'])):
                     data['email'] = email_text
                     break
         
