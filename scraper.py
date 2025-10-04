@@ -154,6 +154,12 @@ class BookMyPlayerScraperPro:
         if instagram_match:
             data['instagram_url'] = instagram_match.group(1)
         
+        # Log venue extraction details
+        venue_name = data.get('name', 'Unknown')
+        venue_phone = data.get('phone', 'No phone')
+        venue_address = data.get('address', 'No address')
+        self.logger.info(f"VENUE EXTRACTED: {venue_name} | Phone: {venue_phone} | Address: {venue_address}")
+        
         return data
     
     def extract_coach_fields(self, html: str, url: str) -> Dict[str, Any]:
@@ -259,6 +265,13 @@ class BookMyPlayerScraperPro:
                 data['date_of_birth'] = dob_match.group(1)
                 break
         
+        # Log coach extraction details (HTML)
+        coach_name = data.get('name', 'Unknown')
+        coach_phone = data.get('phone', 'No phone')
+        coach_email = data.get('email', 'No email')
+        coach_location = data.get('location', 'No location')
+        self.logger.info(f"COACH EXTRACTED (HTML): {coach_name} | Phone: {coach_phone} | Email: {coach_email} | Location: {coach_location}")
+        
         return data
     
     def extract_coach_from_json(self, json_content: str, url: str) -> Dict[str, Any]:
@@ -325,7 +338,12 @@ class BookMyPlayerScraperPro:
                 elif 'state' in data:
                     data['location'] = data['state']
                 
-                self.logger.info(f"Successfully extracted coach data from JSON: {data.get('name', 'Unknown')}")
+                # Log coach extraction details
+                coach_name = data.get('name', 'Unknown')
+                coach_phone = data.get('phone', 'No phone')
+                coach_email = data.get('email', 'No email')
+                coach_location = data.get('location', 'No location')
+                self.logger.info(f"COACH EXTRACTED (JSON): {coach_name} | Phone: {coach_phone} | Email: {coach_email} | Location: {coach_location}")
                 
             else:
                 self.logger.warning("No 'd' key found in coach JSON data")
@@ -425,6 +443,13 @@ class BookMyPlayerScraperPro:
                     data['phone'] = self.format_phone(phone_text)
                     break
         
+        # Log player extraction details
+        player_name = data.get('name', 'Unknown')
+        player_phone = data.get('phone', 'No phone')
+        player_email = data.get('email', 'No email')
+        player_location = data.get('location', 'No location')
+        self.logger.info(f"PLAYER EXTRACTED: {player_name} | Phone: {player_phone} | Email: {player_email} | Location: {player_location}")
+        
         return data
     
     def detect_content_type(self, html: str, url: str) -> str:
@@ -486,9 +511,10 @@ class BookMyPlayerScraperPro:
             elif content_type == 'player':
                 return self.extract_player_fields(html, url)
             else:
+                self.logger.warning(f"UNKNOWN TYPE: {url} - Could not determine content type")
                 return {'url': url, 'type': 'unknown', 'error': 'Could not determine content type', 'scraped_at': datetime.now().isoformat()}
         except Exception as e:
-            self.logger.error(f"Error scraping {url}: {e}")
+            self.logger.error(f"ERROR SCRAPING: {url} - {e}")
             return {'url': url, 'type': 'error', 'error': str(e), 'scraped_at': datetime.now().isoformat()}
     
     def categorize_result(self, result: Dict[str, Any]):
@@ -608,6 +634,11 @@ class BookMyPlayerScraperPro:
                             f"Rate: {stats['rate_per_minute']:.1f}/min | "
                             f"URL: {url[:100]}..."
                         )
+                    
+                    # Detailed summary every 10 records
+                    if i % 10 == 0:
+                        stats = self.get_processing_stats()
+                        self.logger.info(f"SUMMARY: Processed {i}/{total_urls} | Venues: {stats['venues']} | Coaches: {stats['coaches']} | Players: {stats['players']} | Errors: {stats['errors']}")
                     
                     # Scrape URL
                     result = self.scrape_url(url)
