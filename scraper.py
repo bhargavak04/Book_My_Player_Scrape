@@ -332,7 +332,13 @@ class BookMyPlayerScraperPro:
                 
                 # Create location string from city and state
                 if 'city' in data and 'state' in data:
-                    data['location'] = f"{data['city']}, {data['state']}"
+                    city = data['city']
+                    state = data['state']
+                    # Avoid duplication if city already contains state
+                    if state.lower() in city.lower():
+                        data['location'] = city
+                    else:
+                        data['location'] = f"{city}, {state}"
                 elif 'city' in data:
                     data['location'] = data['city']
                 elif 'state' in data:
@@ -379,15 +385,25 @@ class BookMyPlayerScraperPro:
                         data[key] = self.format_phone(value)
                     else:
                         data[key] = value
+        
+        # Enhanced name extraction - try multiple sources
+        if not data.get('name'):
+            # Try h1 tag first
+            h1_elem = soup.find('h1')
+            if h1_elem:
+                h1_text = h1_elem.get_text(strip=True)
+                if h1_text and len(h1_text) > 3:
+                    data['name'] = h1_text
             else:
-                # Try class-based extraction as fallback
-                if key == 'name':
-                    # Try to find player name in title or heading
-                    title_elem = soup.find('h1') or soup.find('title')
-                    if title_elem:
-                        title_text = title_elem.get_text(strip=True)
-                        if 'player' in title_text.lower():
-                            data[key] = title_text
+                # Try title tag
+                title_elem = soup.find('title')
+                if title_elem:
+                    title_text = title_elem.get_text(strip=True)
+                    # Extract name from title (remove " - Basketball Player in Noida" part)
+                    if ' - ' in title_text:
+                        data['name'] = title_text.split(' - ')[0]
+                    else:
+                        data['name'] = title_text
         
         # Enhanced location extraction
         location_patterns = [
@@ -402,7 +418,12 @@ class BookMyPlayerScraperPro:
             location_match = re.search(pattern, html, re.IGNORECASE)
             if location_match:
                 location_text = location_match.group(1).strip()
-                if location_text and len(location_text) > 3 and location_text != '-':
+                # Clean up location text and avoid long descriptions
+                if (location_text and 
+                    len(location_text) > 3 and 
+                    len(location_text) < 200 and  # Avoid very long text
+                    location_text != '-' and
+                    not any(bad in location_text.lower() for bad in ['book coaching', 'training schedule', 'free trial', 'description'])):
                     data['location'] = location_text
                     break
         
@@ -419,11 +440,13 @@ class BookMyPlayerScraperPro:
             email_match = re.search(pattern, html, re.IGNORECASE)
             if email_match:
                 email_text = email_match.group(1).strip()
-                # Skip generic emails and empty values
+                # Skip generic emails, empty values, and malformed text
                 if (email_text and 
                     email_text != '-' and 
                     '@' in email_text and
-                    not any(generic in email_text.lower() for generic in ['care@', 'info@', 'support@', 'contact@', 'admin@'])):
+                    len(email_text) < 100 and  # Avoid long malformed text
+                    not any(generic in email_text.lower() for generic in ['care@', 'info@', 'support@', 'contact@', 'admin@']) and
+                    not any(bad in email_text.lower() for bad in ['book coaching', 'training schedule', 'free trial'])):
                     data['email'] = email_text
                     break
         
