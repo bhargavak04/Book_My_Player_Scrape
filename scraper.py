@@ -13,7 +13,7 @@ import signal
 import sys
 
 class BookMyPlayerScraperPro:
-    def __init__(self, auto_save_interval: int = 1000, max_workers: int = 1, delay_between_requests: float = 1.0):
+    def __init__(self, auto_save_interval: int = 1000, max_workers: int = 1, delay_between_requests: float = 0.1):
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -44,9 +44,10 @@ class BookMyPlayerScraperPro:
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
         
-        self.logger.info("BookMyPlayerScraperPro initialized")
-        self.logger.info(f"Auto-save interval: {auto_save_interval} records")
-        self.logger.info(f"Request delay: {delay_between_requests} seconds")
+        self.logger.info("🚀 BookMyPlayerScraperPro initialized")
+        self.logger.info(f"💾 Auto-save interval: {auto_save_interval} records")
+        self.logger.info(f"⚡ Request delay: {delay_between_requests} seconds")
+        self.logger.info(f"📁 Output directory: output/")
     
     def setup_logging(self):
         """Setup comprehensive logging"""
@@ -642,22 +643,33 @@ class BookMyPlayerScraperPro:
             self.error_data.append(result)
     
     def save_progress(self, filename_prefix: str = "bookmyplayer_progress"):
-        """Save current progress to Excel file"""
+        """Save current progress to Excel file with robust error handling"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"output/{filename_prefix}_{timestamp}.xlsx"
         
-        os.makedirs('output', exist_ok=True)
+        # Ensure output directory exists
+        try:
+            os.makedirs('output', exist_ok=True)
+            self.logger.info(f"Output directory ensured: output/")
+        except Exception as e:
+            self.logger.error(f"Failed to create output directory: {e}")
+            return None
         
         try:
+            # Create Excel file with all data
             with pd.ExcelWriter(filename, engine='openpyxl') as writer:
                 if self.venue_data:
                     pd.DataFrame(self.venue_data).to_excel(writer, sheet_name='Venues', index=False)
+                    self.logger.info(f"Saved {len(self.venue_data)} venues to Excel")
                 if self.coach_data:
                     pd.DataFrame(self.coach_data).to_excel(writer, sheet_name='Coaches', index=False)
+                    self.logger.info(f"Saved {len(self.coach_data)} coaches to Excel")
                 if self.player_data:
                     pd.DataFrame(self.player_data).to_excel(writer, sheet_name='Players', index=False)
+                    self.logger.info(f"Saved {len(self.player_data)} players to Excel")
                 if self.error_data:
                     pd.DataFrame(self.error_data).to_excel(writer, sheet_name='Errors', index=False)
+                    self.logger.info(f"Saved {len(self.error_data)} errors to Excel")
             
             # Save progress stats
             stats = {
@@ -668,20 +680,31 @@ class BookMyPlayerScraperPro:
                 'coaches': len(self.coach_data),
                 'players': len(self.player_data),
                 'timestamp': timestamp,
-                'filename': filename
+                'filename': filename,
+                'elapsed_time': time.time() - self.start_time if self.start_time else 0
             }
             
-            with open(f"output/stats_{timestamp}.json", 'w') as f:
+            stats_filename = f"output/stats_{timestamp}.json"
+            with open(stats_filename, 'w') as f:
                 json.dump(stats, f, indent=2)
             
-            self.logger.info(f"Progress saved to {filename}")
-            self.logger.info(f"Stats: Processed={self.processed_count}, Success={self.success_count}, Errors={self.error_count}")
-            self.logger.info(f"Data: Venues={len(self.venue_data)}, Coaches={len(self.coach_data)}, Players={len(self.player_data)}")
-            
-            return filename
+            # Verify files were created
+            if os.path.exists(filename) and os.path.exists(stats_filename):
+                file_size = os.path.getsize(filename)
+                self.logger.info(f"✅ PROGRESS SAVED: {filename} ({file_size} bytes)")
+                self.logger.info(f"✅ STATS SAVED: {stats_filename}")
+                self.logger.info(f"📊 STATS: Processed={self.processed_count}, Success={self.success_count}, Errors={self.error_count}")
+                self.logger.info(f"📊 DATA: Venues={len(self.venue_data)}, Coaches={len(self.coach_data)}, Players={len(self.player_data)}")
+                return filename
+            else:
+                self.logger.error(f"❌ Files not created properly: {filename}")
+                return None
             
         except Exception as e:
-            self.logger.error(f"Failed to save progress: {e}")
+            self.logger.error(f"❌ FAILED TO SAVE PROGRESS: {e}")
+            self.logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
             return None
     
     def get_processing_stats(self):
@@ -751,7 +774,16 @@ class BookMyPlayerScraperPro:
                     # Detailed summary every 10 records
                     if i % 10 == 0:
                         stats = self.get_processing_stats()
-                        self.logger.info(f"SUMMARY: Processed {i}/{total_urls} | Venues: {stats['venues']} | Coaches: {stats['coaches']} | Players: {stats['players']} | Errors: {stats['errors']}")
+                        self.logger.info(f"📊 SUMMARY: Processed {i}/{total_urls} | Venues: {stats['venues']} | Coaches: {stats['coaches']} | Players: {stats['players']} | Errors: {stats['errors']}")
+                    
+                    # Manual save trigger every 100 records for intermediate downloads
+                    if i % 100 == 0:
+                        self.logger.info(f"💾 MANUAL SAVE at {i} records for intermediate download")
+                        save_result = self.save_progress(f"bookmyplayer_intermediate_{i}")
+                        if save_result:
+                            self.logger.info(f"✅ INTERMEDIATE SAVE SUCCESS: {save_result}")
+                        else:
+                            self.logger.error(f"❌ INTERMEDIATE SAVE FAILED at {i} records")
                     
                     # Scrape URL
                     result = self.scrape_url(url)
@@ -765,10 +797,14 @@ class BookMyPlayerScraperPro:
                     else:
                         self.error_count += 1
                     
-                    # Auto-save check
+                    # Auto-save check - with detailed logging
                     if self.processed_count % self.auto_save_interval == 0:
-                        self.save_progress()
-                        self.logger.info(f"Auto-saved at {self.processed_count} records")
+                        self.logger.info(f"🔄 AUTO-SAVE TRIGGERED at {self.processed_count} records")
+                        save_result = self.save_progress()
+                        if save_result:
+                            self.logger.info(f"✅ AUTO-SAVE SUCCESS: {save_result}")
+                        else:
+                            self.logger.error(f"❌ AUTO-SAVE FAILED at {self.processed_count} records")
                     
                     # Delay between requests
                     if i < total_urls:  # Don't delay after last URL
@@ -804,7 +840,7 @@ class BookMyPlayerScraperPro:
 if __name__ == "__main__":
     # Configuration from environment variables
     AUTO_SAVE_INTERVAL = int(os.getenv('AUTO_SAVE_INTERVAL', '1000'))
-    REQUEST_DELAY = float(os.getenv('REQUEST_DELAY', '1.0'))
+    REQUEST_DELAY = float(os.getenv('REQUEST_DELAY', '0.1'))
     INPUT_FILE = os.getenv('INPUT_FILE', 'BookMyPlayer.xlsx')
     URL_COLUMN = os.getenv('URL_COLUMN', '0')
     START_FROM = int(os.getenv('START_FROM', '0'))
