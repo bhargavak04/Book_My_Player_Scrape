@@ -485,6 +485,11 @@ class BookMyPlayerScraperPro:
     def detect_content_type(self, html: str, url: str) -> tuple[str, dict]:
         """Detect content type using brute force - try all extraction methods and pick the best one"""
         
+        # First check if this is a listing page (not an individual profile)
+        if self._is_listing_page(url, html):
+            self.logger.warning(f"LISTING PAGE DETECTED: {url} - Skipping extraction")
+            return 'listing', {'url': url, 'type': 'listing', 'scraped_at': datetime.now().isoformat()}
+        
         # Try venue extraction first
         venue_data = self.extract_venue_fields(html, url)
         venue_score = self._calculate_extraction_score(venue_data, 'venue')
@@ -533,11 +538,11 @@ class BookMyPlayerScraperPro:
         
         # Score for having key fields with actual values
         if content_type == 'venue':
-            if data.get('name') and data.get('name') != 'Unknown':
+            if data.get('name') and data.get('name') not in ['Unknown', '']:
                 score += 5
-            if data.get('phone') and data.get('phone') != 'No phone':
+            if data.get('phone') and data.get('phone') not in ['No phone', '']:
                 score += 5
-            if data.get('address') and data.get('address') != 'No address':
+            if data.get('address') and data.get('address') not in ['No address', '']:
                 score += 5
             if data.get('sport'):
                 score += 3
@@ -545,23 +550,23 @@ class BookMyPlayerScraperPro:
                 score += 2
                 
         elif content_type == 'player':
-            if data.get('name') and data.get('name') != 'Unknown':
+            if data.get('name') and data.get('name') not in ['Unknown', '']:
                 score += 5
-            if data.get('phone') and data.get('phone') != 'No phone':
+            if data.get('phone') and data.get('phone') not in ['No phone', '']:
                 score += 5
-            if data.get('email') and data.get('email') != 'No email':
+            if data.get('email') and data.get('email') not in ['No email', '']:
                 score += 5
-            if data.get('location') and data.get('location') != 'No location':
+            if data.get('location') and data.get('location') not in ['No location', '']:
                 score += 3
                 
         elif content_type == 'coach':
-            if data.get('name') and data.get('name') != 'Unknown':
+            if data.get('name') and data.get('name') not in ['Unknown', '']:
                 score += 5
-            if data.get('phone') and data.get('phone') != 'No phone':
+            if data.get('phone') and data.get('phone') not in ['No phone', '']:
                 score += 5
-            if data.get('email') and data.get('email') != 'No email':
+            if data.get('email') and data.get('email') not in ['No email', '']:
                 score += 5
-            if data.get('location') and data.get('location') != 'No location':
+            if data.get('location') and data.get('location') not in ['No location', '']:
                 score += 3
             if data.get('experience'):
                 score += 2
@@ -574,7 +579,22 @@ class BookMyPlayerScraperPro:
         """Fallback URL-based detection when brute force fails"""
         url_lower = url.lower()
         
-        # Venue patterns
+        # Check for listing pages first (these should be skipped or handled differently)
+        listing_patterns = [
+            '-coaches-in-', '-players-in-', '-gyms-in-', 
+            '-academies-in-', '-clubs-in-', 'clid-', 'pid-', 'aid-'
+        ]
+        
+        # If it's a listing page, try to determine the type
+        if any(pattern in url_lower for pattern in listing_patterns):
+            if '-coaches-in-' in url_lower or 'clid-' in url_lower:
+                return 'coach'
+            elif '-players-in-' in url_lower or 'pid-' in url_lower:
+                return 'player'
+            elif '-gyms-in-' in url_lower or '-academies-in-' in url_lower or 'aid-' in url_lower:
+                return 'venue'
+        
+        # Individual profile patterns
         venue_patterns = [
             '/gym/', '/academy', 'academy', '/school', 'school', 
             '/club', 'club', '/fc', 'fc', '/acad', 'acad',
@@ -592,6 +612,65 @@ class BookMyPlayerScraperPro:
             return 'player'
         
         return 'unknown'
+    
+    def _is_listing_page(self, url: str, html: str) -> bool:
+        """Check if this is a listing page rather than an individual profile"""
+        url_lower = url.lower()
+        
+        # URL patterns that indicate listing pages (NOT individual profiles)
+        listing_url_patterns = [
+            '-coaches-in-', '-players-in-', '-gyms-in-', 
+            '-academies-in-', '-clubs-in-'
+        ]
+        
+        # Check for listing page patterns (but NOT individual profile IDs)
+        if any(pattern in url_lower for pattern in listing_url_patterns):
+            return True
+        
+        # Check for individual profile ID patterns - these are NOT listing pages
+        individual_profile_patterns = [
+            '-aid-', '-chid-', '-pid-',  # Individual profile IDs
+            'clid-', 'aid-', 'pid-'      # Alternative format
+        ]
+        
+        # If it has individual profile ID patterns, it's NOT a listing page
+        if any(pattern in url_lower for pattern in individual_profile_patterns):
+            return False
+        
+        # Check HTML content for listing page indicators
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Look for listing page indicators
+        listing_indicators = [
+            # Multiple profile cards or listings
+            soup.find_all('div', class_=lambda x: x and 'card' in x.lower()),
+            soup.find_all('div', class_=lambda x: x and 'listing' in x.lower()),
+            soup.find_all('div', class_=lambda x: x and 'profile' in x.lower()),
+            # Search/filter elements
+            soup.find('input', {'type': 'search'}),
+            soup.find('select', {'name': lambda x: x and 'filter' in x.lower()}),
+            # Pagination
+            soup.find('nav', {'aria-label': 'pagination'}),
+            soup.find('ul', class_=lambda x: x and 'pagination' in x.lower()),
+        ]
+        
+        # If we find multiple indicators, it's likely a listing page
+        non_empty_indicators = [ind for ind in listing_indicators if ind]
+        if len(non_empty_indicators) >= 2:
+            return True
+        
+        # Check for specific text patterns that indicate listing pages
+        listing_text_patterns = [
+            'coaches in', 'players in', 'gyms in', 'academies in',
+            'search results', 'filter by', 'sort by', 'showing',
+            'total results', 'found', 'matches'
+        ]
+        
+        page_text = soup.get_text().lower()
+        if any(pattern in page_text for pattern in listing_text_patterns):
+            return True
+        
+        return False
     
     def scrape_url(self, url: str) -> Dict[str, Any]:
         """Main scraping function that auto-detects type and extracts appropriate fields"""
@@ -639,6 +718,10 @@ class BookMyPlayerScraperPro:
             self.coach_data.append(result)
         elif result['type'] == 'player':
             self.player_data.append(result)
+        elif result['type'] == 'listing':
+            # Skip listing pages - they don't contain individual profile data
+            self.logger.info(f"SKIPPED LISTING PAGE: {result['url']}")
+            return
         else:
             self.error_data.append(result)
     

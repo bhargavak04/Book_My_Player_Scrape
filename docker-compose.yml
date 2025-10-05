@@ -12,7 +12,7 @@ services:
       - REQUEST_DELAY=1.0
       - INPUT_FILE=/app/input/urls.xlsx
       - URL_COLUMN=https://www.bookmyplayer.com/football/fast-football-club-sector-58-gurgaon-aid-1
-      - START_FROM=0
+      - START_FROM=36000
       - TIMEOUT=30
       - MAX_RETRIES=3
       - MAX_WORKERS=1
